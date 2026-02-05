@@ -1,7 +1,7 @@
 // =====================================================
 // TRENCHYBET POINTS - EVENT LISTENER 
 // =====================================================
-import { createPublicClient, http, parseAbiItem, formatUnits } from 'viem';
+import { createPublicClient, http, parseAbiItem, formatUnits, getAddress } from 'viem';
 import { baseSepolia } from 'viem/chains';
 import { createClient } from '@supabase/supabase-js';
 import 'dotenv/config';
@@ -29,31 +29,24 @@ const WIN_MULTIPLIER = 5; // 5x points on wins
 // === ENSURE USER EXISTS ===
 async function ensureUserExists(wallet) {
   const address = wallet.toLowerCase();
-  
-  // Check if user exists
-  const { data: existingUser } = await supabase
-    .from('users')
-    .select('wallet_address')
-    .eq('wallet_address', address)
-    .single();
-  
-  if (existingUser) return; // User already exists
-  
-  // Create new user
+
+  // Upsert the user to ensure they exist
   const { error } = await supabase
     .from('users')
-    .insert({
+    .upsert({
       wallet_address: address,
       total_points: 0,
       last_bet_timestamp: new Date().toISOString()
+    }, {
+      onConflict: 'wallet_address'
     });
-  
-  if (error && error.code !== '23505') { // Ignore duplicate key errors
-    console.error('Error creating user:', error);
+
+  if (error) {
+    console.error('Error upserting user:', error);
     throw error;
   }
-  
-  console.log(`✅ New user created: ${address.slice(0, 6)}...${address.slice(-4)}`);
+
+  console.log(`✅ User ensured: ${address.slice(0, 6)}...${address.slice(-4)}`);
 }
 
 // === AWARD POINTS FUNCTION ===
