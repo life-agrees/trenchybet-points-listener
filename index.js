@@ -1,5 +1,5 @@
 // =====================================================
-// TRENCHYBET POINTS - EVENT LISTENER (FIXED)
+// TRENCHYBET POINTS - EVENT LISTENER 
 // =====================================================
 import { createPublicClient, http, parseAbiItem, formatUnits } from 'viem';
 import { baseSepolia } from 'viem/chains';
@@ -26,14 +26,49 @@ const publicClient = createPublicClient({
 const POINTS_PER_DOLLAR = 10; // 10 points per $1 USDC
 const WIN_MULTIPLIER = 5; // 5x points on wins
 
+// === ENSURE USER EXISTS ===
+async function ensureUserExists(wallet) {
+  const address = wallet.toLowerCase();
+  
+  // Check if user exists
+  const { data: existingUser } = await supabase
+    .from('users')
+    .select('wallet_address')
+    .eq('wallet_address', address)
+    .single();
+  
+  if (existingUser) return; // User already exists
+  
+  // Create new user
+  const { error } = await supabase
+    .from('users')
+    .insert({
+      wallet_address: address,
+      total_points: 0,
+      last_bet_timestamp: new Date().toISOString()
+    });
+  
+  if (error && error.code !== '23505') { // Ignore duplicate key errors
+    console.error('Error creating user:', error);
+    throw error;
+  }
+  
+  console.log(`✅ New user created: ${address.slice(0, 6)}...${address.slice(-4)}`);
+}
+
 // === AWARD POINTS FUNCTION ===
 async function awardPoints(wallet, points, source, metadata = {}) {
   try {
-    // 1. Insert into ledger
+    const address = wallet.toLowerCase();
+    
+    // 1. FIRST ensure user exists (critical!)
+    await ensureUserExists(address);
+    
+    // 2. Insert into ledger
     const { error: ledgerError } = await supabase
       .from('points_ledger')
       .insert({
-        wallet_address: wallet.toLowerCase(),
+        wallet_address: address,
         points_earned: points,
         source: source,
         bet_id: metadata.betId || null,
@@ -46,36 +81,24 @@ async function awardPoints(wallet, points, source, metadata = {}) {
       return;
     }
 
-    // 2. Check if user exists
+    // 3. Update user's total points
     const { data: user } = await supabase
       .from('users')
       .select('total_points')
-      .eq('wallet_address', wallet.toLowerCase())
+      .eq('wallet_address', address)
       .single();
 
     if (user) {
-      // User exists, update
       await supabase
         .from('users')
         .update({ 
           total_points: user.total_points + points,
           last_bet_timestamp: new Date().toISOString()
         })
-        .eq('wallet_address', wallet.toLowerCase());
-    } else {
-      // New user, insert
-      await supabase
-        .from('users')
-        .insert({
-          wallet_address: wallet.toLowerCase(),
-          total_points: points,
-          last_bet_timestamp: new Date().toISOString()
-        });
-      
-      console.log(`✅ New user created: ${wallet.toLowerCase()}`);
+        .eq('wallet_address', address);
     }
 
-    console.log(`💰 Awarded ${points} points to ${wallet.slice(0, 6)}...${wallet.slice(-4)} (${source})`);
+    console.log(`💰 Awarded ${points} points to ${address.slice(0, 6)}...${address.slice(-4)} (${source})`);
   } catch (error) {
     console.error('❌ Error awarding points:', error.message);
   }
@@ -121,6 +144,9 @@ async function handleWinningsClaimed(log) {
 
     const { marketId, user, amount: payout } = log.args;
     
+    // Skip if payout is 0 (means they lost)
+    if (payout === 0n) return;
+    
     // Get the original bet amount from the ledger
     const { data: betRecord } = await supabase
       .from('points_ledger')
@@ -149,7 +175,7 @@ async function handleWinningsClaimed(log) {
   }
 }
 
-// === POLLING LISTENER (More reliable than websockets) ===
+// === POLLING LISTENER ===
 async function startListener() {
   console.log('🚀 TrenchyBet Points Listener Starting...');
   console.log(`📍 Watching contract: ${CONTRACT_ADDRESS}`);
@@ -189,7 +215,7 @@ async function startListener() {
         toBlock: currentBlock,
       });
       
-      // Process events
+      // Process events sequentially (to avoid race conditions)
       for (const log of betLogs) {
         await handleBetPlaced(log);
       }
