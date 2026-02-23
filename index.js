@@ -8,7 +8,13 @@ import 'dotenv/config';
 
 // === CONFIG ===
 const ALCHEMY_URL = `https://base-sepolia.g.alchemy.com/v2/${process.env.ALCHEMY_API_KEY}`;
-const CONTRACT_ADDRESS = process.env.PREDICTION_MARKET_ADDRESS;
+// PROXY PATTERN: All events are emitted through the proxy contract
+const PROXY_CONTRACT_ADDRESS = process.env.PROXY_ADDRESS || "0x9F710F341dD6b2d9ec20843B28180F5C6C2B0a97";
+// Legacy: Core and Types addresses (kept for reference, but not used with proxy)
+const CORE_CONTRACT_ADDRESS = process.env.PREDICTION_MARKET_CORE_ADDRESS;
+const TYPES_CONTRACT_ADDRESS = process.env.PREDICTION_MARKET_TYPES_ADDRESS;
+
+
 
 // Supabase client
 const supabase = createClient(
@@ -171,7 +177,8 @@ async function handleWinningsClaimed(log) {
 // === POLLING LISTENER ===
 async function startListener() {
   console.log('🚀 TrenchyBet Points Listener Starting...');
-  console.log(`📍 Watching contract: ${CONTRACT_ADDRESS}`);
+  console.log(`📍 Watching Proxy: ${PROXY_CONTRACT_ADDRESS}`);
+  console.log('   (Proxy pattern: All events emitted through single contract)');
   
   // Get the latest block number
   const latestBlock = await publicClient.getBlockNumber();
@@ -192,17 +199,17 @@ async function startListener() {
       
       console.log(`🔍 Scanning blocks ${lastProcessedBlock + 1n} to ${currentBlock}...`);
       
-      // Fetch BetPlaced events
+      // Fetch BetPlaced events from PROXY (covers both Core and Types markets)
       const betLogs = await publicClient.getLogs({
-        address: CONTRACT_ADDRESS,
+        address: PROXY_CONTRACT_ADDRESS,
         event: parseAbiItem('event BetPlaced(uint256 indexed marketId, address indexed user, uint8 choice, uint256 amount)'),
         fromBlock: lastProcessedBlock + 1n,
         toBlock: currentBlock,
       });
       
-      // Fetch WinningsClaimed events
+      // Fetch WinningsClaimed events from PROXY
       const winLogs = await publicClient.getLogs({
-        address: CONTRACT_ADDRESS,
+        address: PROXY_CONTRACT_ADDRESS,
         event: parseAbiItem('event WinningsClaimed(uint256 indexed marketId, address indexed user, uint256 amount)'),
         fromBlock: lastProcessedBlock + 1n,
         toBlock: currentBlock,
@@ -230,6 +237,8 @@ async function startListener() {
     }
   }, 5000); // Poll every 5 seconds
 }
+
+
 
 // === STARTUP ===
 async function main() {
