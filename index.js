@@ -18,7 +18,7 @@ const RPC_URL = ALCHEMY_API_KEY
 console.log(`🔌 Using RPC provider: ${RPC_URL.includes('alchemy') ? 'Alchemy' : 'Base Sepolia RPC'}`);
 
 // Proxy contract (all events emitted here)
-const PROXY_CONTRACT_ADDRESS = process.env.PROXY_ADDRESS || "0x9F710F341dD6b2d9ec20843B28180F5C6C2B0a97";
+const PROXY_CONTRACT_ADDRESS = process.env.PROXY_ADDRESS || "0x40c64085FEA4b46494e7674d2f8EE1f6C24c9581";
 
 // Supabase client
 const supabase = createClient(
@@ -164,8 +164,7 @@ async function startListener() {
 
       const betLogs = await publicClient.getLogs({
         address: PROXY_CONTRACT_ADDRESS,
-        event: parseAbiItem('event BetPlaced(uint256 indexed marketId, address indexed user, uint8 choice, uint256 amount)'),
-        fromBlock: lastProcessedBlock + 1n,
+        event: parseAbiItem('event BetPlaced(uint256 indexed marketId, address indexed user, uint8 choice, uint256 amount, uint256 effectiveMultiplier)'),
         toBlock: currentBlock,
       });
 
