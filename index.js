@@ -151,8 +151,10 @@ async function startListener() {
   console.log('🚀 TrenchyBet Points Listener Starting...');
   console.log(`📍 Watching Proxy: ${PROXY_CONTRACT_ADDRESS}`);
 
-  let lastProcessedBlock = await publicClient.getBlockNumber();
-  console.log(`📦 Starting from block: ${lastProcessedBlock}`);
+const currentBlock = await publicClient.getBlockNumber();
+const LOOK_BACK = 500000n;
+let lastProcessedBlock = currentBlock > LOOK_BACK ? currentBlock - LOOK_BACK : 0n;
+console.log(`📦 Starting from block: ${lastProcessedBlock} (scanning back 500k blocks)`);
   console.log('✅ Listening for events...\n');
 
   setInterval(async () => {
