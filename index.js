@@ -150,11 +150,10 @@ async function handleWinningsClaimed(log) {
 async function startListener() {
   console.log('🚀 TrenchyBet Points Listener Starting...');
   console.log(`📍 Watching Proxy: ${PROXY_CONTRACT_ADDRESS}`);
-
-const currentBlock = await publicClient.getBlockNumber();
-const LOOK_BACK = 500000n;
-let lastProcessedBlock = currentBlock > LOOK_BACK ? currentBlock - LOOK_BACK : 0n;
-console.log(`📦 Starting from block: ${lastProcessedBlock} (scanning back 500k blocks)`);
+  const currentBlock = await publicClient.getBlockNumber();
+  const LOOK_BACK = 500000n;
+  let lastProcessedBlock = currentBlock > LOOK_BACK ? currentBlock - LOOK_BACK : 0n;
+  console.log(`📦 Starting from block: ${lastProcessedBlock} (scanning back 500k blocks)`);
   console.log('✅ Listening for events...\n');
 
   setInterval(async () => {
@@ -162,26 +161,34 @@ console.log(`📦 Starting from block: ${lastProcessedBlock} (scanning back 500k
       const currentBlock = await publicClient.getBlockNumber();
       if (currentBlock <= lastProcessedBlock) return;
 
-      console.log(`🔍 Scanning blocks ${lastProcessedBlock + 1n} to ${currentBlock}...`);
+      const CHUNK_SIZE = 9999n;
+      let from = lastProcessedBlock + 1n;
 
-      const betLogs = await publicClient.getLogs({
-        address: PROXY_CONTRACT_ADDRESS,
-        event: parseAbiItem('event BetPlaced(uint256 indexed marketId, address indexed user, uint8 choice, uint256 amount, uint256 effectiveMultiplier)'),
-        toBlock: currentBlock,
-      });
+      while (from <= currentBlock) {
+        const to = from + CHUNK_SIZE > currentBlock ? currentBlock : from + CHUNK_SIZE;
+        console.log(`🔍 Scanning blocks ${from} to ${to}...`);
 
-      const winLogs = await publicClient.getLogs({
-        address: PROXY_CONTRACT_ADDRESS,
-        event: parseAbiItem('event WinningsClaimed(uint256 indexed marketId, address indexed user, uint256 amount)'),
-        fromBlock: lastProcessedBlock + 1n,
-        toBlock: currentBlock,
-      });
+        const [betLogs, winLogs] = await Promise.all([
+          publicClient.getLogs({
+            address: PROXY_CONTRACT_ADDRESS,
+            event: parseAbiItem('event BetPlaced(uint256 indexed marketId, address indexed user, uint8 choice, uint256 amount, uint256 effectiveMultiplier)'),
+            fromBlock: from, toBlock: to,
+          }),
+          publicClient.getLogs({
+            address: PROXY_CONTRACT_ADDRESS,
+            event: parseAbiItem('event WinningsClaimed(uint256 indexed marketId, address indexed user, uint256 amount)'),
+            fromBlock: from, toBlock: to,
+          }),
+        ]);
 
-      for (const log of betLogs) await handleBetPlaced(log);
-      for (const log of winLogs) await handleWinningsClaimed(log);
+        for (const log of betLogs) await handleBetPlaced(log);
+        for (const log of winLogs) await handleWinningsClaimed(log);
 
-      if (betLogs.length || winLogs.length) {
-        console.log(`✅ Processed ${betLogs.length} bets, ${winLogs.length} wins\n`);
+        if (betLogs.length || winLogs.length) {
+          console.log(`✅ Processed ${betLogs.length} bets, ${winLogs.length} wins`);
+        }
+
+        from = to + 1n;
       }
 
       lastProcessedBlock = currentBlock;
