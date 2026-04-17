@@ -34,7 +34,7 @@ const publicClient = createPublicClient({
 
 // === POINTS CALCULATION ===
 const POINTS_PER_DOLLAR = 10; // 10 points per $1 USDC
-const WIN_MULTIPLIER = 5;     // 5x points on wins
+const WIN_MULTIPLIER = 2;     // 2x points on wins (3:1 winner:loser ratio)
 
 // === ENSURE USER EXISTS ===
 async function ensureUserExists(wallet) {
