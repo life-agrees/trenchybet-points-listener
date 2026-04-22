@@ -4,7 +4,7 @@
 import { createPublicClient, http, parseAbiItem, formatUnits } from 'viem';
 import { baseSepolia } from 'viem/chains';
 import { createClient } from '@supabase/supabase-js';
-import { PREDICTION_MARKET_PROXY_ABI } from '../src/contracts/proxyAbi.js';
+import { PREDICTION_MARKET_PROXY_ABI } from './proxyAbi.js';
 import 'dotenv/config';
 
 // === CONFIG ===
