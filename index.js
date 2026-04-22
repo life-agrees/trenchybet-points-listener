@@ -237,10 +237,18 @@ async function startListener() {
   console.log(`📦 Starting from block: ${lastProcessedBlock} (scanning back 3M blocks ~17 days)`);
   console.log('✅ Listening for events...\n');
 
+  let isProcessing = false;
+
   setInterval(async () => {
+    if (isProcessing) return;
+    
     try {
+      isProcessing = true;
       const currentBlock = await publicClient.getBlockNumber();
-      if (currentBlock <= lastProcessedBlock) return;
+      if (currentBlock <= lastProcessedBlock) {
+        isProcessing = false;
+        return;
+      }
 
       const CHUNK_SIZE = 9999n;
       let from = lastProcessedBlock + 1n;
@@ -277,16 +285,20 @@ async function startListener() {
         for (const log of resolvedLogs) await handleMarketResolved(log);
         for (const log of winLogs) await handleWinningsClaimed(log);
 
-        if (betLogs.length || winLogs.length) {
-          console.log(`✅ Processed ${betLogs.length} bets, ${winLogs.length} wins`);
+        if (betLogs.length || winLogs.length || marketLogs.length || resolvedLogs.length) {
+          console.log(`✅ Processed ${marketLogs.length} markets, ${betLogs.length} bets, ${resolvedLogs.length} resolved, ${winLogs.length} wins`);
         }
 
         from = to + 1n;
+        lastProcessedBlock = to;
+        
+        // Wait 300ms between chunks to prevent RPC rate-limits (HTTP 429)
+        await new Promise(resolve => setTimeout(resolve, 300));
       }
-
-      lastProcessedBlock = currentBlock;
     } catch (error) {
       console.error('❌ Error in polling loop:', error.message);
+    } finally {
+      isProcessing = false;
     }
   }, 5000);
 }
