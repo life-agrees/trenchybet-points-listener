@@ -111,8 +111,7 @@ async function handleBetPlaced(log) {
       txHash: log.transactionHash
     });
     
-    // [INDEXER] Insert into user_bets
-    const { error: upsertErr } = await supabase.from('user_bets').upsert({
+    const betPayload = {
       market_id: Number(marketId),
       wallet_address: user.toLowerCase(),
       choice: Number(log.args.choice),
@@ -120,9 +119,25 @@ async function handleBetPlaced(log) {
       multiplier: Number(log.args.effectiveMultiplier || 0),
       tx_hash: log.transactionHash,
       block_number: Number(log.blockNumber)
-    }, { onConflict: 'tx_hash' });
+    };
+
+    let { error: upsertErr } = await supabase.from('user_bets').upsert(betPayload, { onConflict: 'tx_hash' });
     
-    if (upsertErr) console.error('❌ Failed to index bet:', upsertErr.message);
+    if (upsertErr) {
+      // If market doesn't exist (e.g. created before our 3M block lookback window)
+      if (upsertErr.message.includes('foreign key constraint')) {
+        console.log(`⚠️ Market ${marketId} missing from database. Self-healing...`);
+        // Manually trigger market fetch & insert
+        await handleMarketCreated({ args: { marketId } });
+        
+        // Retry bet insertion
+        const retry = await supabase.from('user_bets').upsert(betPayload, { onConflict: 'tx_hash' });
+        if (retry.error) console.error('❌ Failed to retry bet index:', retry.error.message);
+        else console.log(`✅ Successfully recovered and indexed bet for market ${marketId}`);
+      } else {
+        console.error('❌ Failed to index bet:', upsertErr.message);
+      }
+    }
 
   } catch (error) {
     console.error('❌ Error in handleBetPlaced:', error.message);
