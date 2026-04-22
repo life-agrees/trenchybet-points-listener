@@ -124,18 +124,20 @@ async function handleBetPlaced(log) {
     let { error: upsertErr } = await supabase.from('user_bets').upsert(betPayload, { onConflict: 'tx_hash' });
     
     if (upsertErr) {
-      // If market doesn't exist (e.g. created before our 3M block lookback window)
-      if (upsertErr.message.includes('foreign key constraint')) {
+      // Postgres Error 23503 is 'foreign_key_violation'
+      const isFkError = upsertErr.code === '23503' || String(upsertErr.message).toLowerCase().includes('foreign key constraint');
+      
+      if (isFkError) {
         console.log(`⚠️ Market ${marketId} missing from database. Self-healing...`);
         // Manually trigger market fetch & insert
         await handleMarketCreated({ args: { marketId } });
         
         // Retry bet insertion
         const retry = await supabase.from('user_bets').upsert(betPayload, { onConflict: 'tx_hash' });
-        if (retry.error) console.error('❌ Failed to retry bet index:', retry.error.message);
+        if (retry.error) console.error(`❌ Failed to retry bet index for market ${marketId}:`, retry.error.message);
         else console.log(`✅ Successfully recovered and indexed bet for market ${marketId}`);
       } else {
-        console.error('❌ Failed to index bet:', upsertErr.message);
+        console.error(`❌ Failed to index bet for market ${marketId}:`, upsertErr.message, upsertErr.code);
       }
     }
 
