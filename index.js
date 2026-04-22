@@ -109,6 +109,20 @@ async function handleBetPlaced(log) {
       betAmount: usdcAmount,
       txHash: log.transactionHash
     });
+    
+    // [INDEXER] Insert into user_bets
+    const { error: upsertErr } = await supabase.from('user_bets').upsert({
+      market_id: Number(marketId),
+      wallet_address: user.toLowerCase(),
+      choice: Number(log.args.choice),
+      amount: usdcAmount,
+      multiplier: Number(log.args.effectiveMultiplier || 0),
+      tx_hash: log.transactionHash,
+      block_number: Number(log.blockNumber)
+    }, { onConflict: 'tx_hash' });
+    
+    if (upsertErr) console.error('❌ Failed to index bet:', upsertErr.message);
+
   } catch (error) {
     console.error('❌ Error in handleBetPlaced:', error.message);
   }
@@ -141,8 +155,92 @@ async function handleWinningsClaimed(log) {
         txHash: log.transactionHash
       });
     }
+
+    // [INDEXER] Update bet as claimed
+    await supabase.from('user_bets').update({ claimed: true })
+      .eq('market_id', Number(marketId))
+      .eq('wallet_address', user.toLowerCase());
+      
   } catch (error) {
     console.error('❌ Error in handleWinningsClaimed:', error.message);
+  }
+}
+
+async function handleMarketCreated(log) {
+  try {
+    const marketId = Number(log.args.marketId);
+    
+    // Read full market data
+    const raw = await publicClient.readContract({
+      address: PROXY_CONTRACT_ADDRESS,
+      abi: [{
+        name: 'markets',
+        type: 'function',
+        stateMutability: 'view',
+        inputs: [{ name: '', type: 'uint256' }],
+        outputs: [
+          { name: 'marketType', type: 'uint8' },
+          { name: 'asset', type: 'string' },
+          { name: 'startTime', type: 'uint256' },
+          { name: 'endTime', type: 'uint256' },
+          { name: 'resolved', type: 'bool' },
+          { name: 'priceWentUp', type: 'bool' },
+          { name: 'totalBets', type: 'uint256' }
+        ]
+      }],
+      functionName: 'markets',
+      args: [BigInt(marketId)]
+    });
+
+    await supabase.from('markets').upsert({
+      id: marketId,
+      market_type: Number(raw[0]),
+      asset: raw[1],
+      start_time: new Date(Number(raw[2]) * 1000).toISOString(),
+      end_time: new Date(Number(raw[3]) * 1000).toISOString(),
+      resolved: false
+    });
+    console.log(`✅ Indexed MarketCreated: ${marketId}`);
+  } catch (err) {
+    // Only log if not a 'not found' error (it might be a deleted/legacy market)
+    console.error(`❌ Error indexing MarketCreated ${log.args.marketId}:`, err.message);
+  }
+}
+
+async function handleMarketResolved(log) {
+  try {
+    const marketId = Number(log.args.marketId);
+    
+    // Read full market data to get priceWentUp
+    const raw = await publicClient.readContract({
+      address: PROXY_CONTRACT_ADDRESS,
+      abi: [{
+        name: 'markets',
+        type: 'function',
+        stateMutability: 'view',
+        inputs: [{ name: '', type: 'uint256' }],
+        outputs: [
+          { name: 'marketType', type: 'uint8' },
+          { name: 'asset', type: 'string' },
+          { name: 'startTime', type: 'uint256' },
+          { name: 'endTime', type: 'uint256' },
+          { name: 'resolved', type: 'bool' },
+          { name: 'priceWentUp', type: 'bool' },
+          { name: 'totalBets', type: 'uint256' }
+        ]
+      }],
+      functionName: 'markets',
+      args: [BigInt(marketId)]
+    });
+
+    await supabase.from('markets').update({
+      resolved: true,
+      winning_choice: log.args.winningChoice !== undefined ? Number(log.args.winningChoice) : null,
+      price_went_up: raw[5]
+    }).eq('id', marketId);
+    console.log(`✅ Indexed MarketResolved: ${marketId}`);
+  } catch (err) {
+    console.error(`❌ Error indexing MarketResolved ${log.args.marketId}:`, err.message);
   }
 }
 
@@ -168,7 +266,7 @@ async function startListener() {
         const to = from + CHUNK_SIZE > currentBlock ? currentBlock : from + CHUNK_SIZE;
         console.log(`🔍 Scanning blocks ${from} to ${to}...`);
 
-        const [betLogs, winLogs] = await Promise.all([
+        const [betLogs, winLogs, marketLogs, resolvedLogs] = await Promise.all([
           publicClient.getLogs({
             address: PROXY_CONTRACT_ADDRESS,
             event: parseAbiItem('event BetPlaced(uint256 indexed marketId, address indexed user, uint8 choice, uint256 amount, uint256 effectiveMultiplier)'),
@@ -179,9 +277,21 @@ async function startListener() {
             event: parseAbiItem('event WinningsClaimed(uint256 indexed marketId, address indexed user, uint256 amount)'),
             fromBlock: from, toBlock: to,
           }),
+          publicClient.getLogs({
+            address: PROXY_CONTRACT_ADDRESS,
+            event: parseAbiItem('event MarketCreated(uint256 indexed marketId, uint8 marketType, string asset, bool useFixedOdds, bool useTimeDecay)'),
+            fromBlock: from, toBlock: to,
+          }),
+          publicClient.getLogs({
+            address: PROXY_CONTRACT_ADDRESS,
+            event: parseAbiItem('event MarketResolved(uint256 indexed marketId, uint8 winningChoice, uint256 protocolFee)'),
+            fromBlock: from, toBlock: to,
+          })
         ]);
 
+        for (const log of marketLogs) await handleMarketCreated(log);
         for (const log of betLogs) await handleBetPlaced(log);
+        for (const log of resolvedLogs) await handleMarketResolved(log);
         for (const log of winLogs) await handleWinningsClaimed(log);
 
         if (betLogs.length || winLogs.length) {
