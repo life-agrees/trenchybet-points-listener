@@ -4,6 +4,7 @@
 import { createPublicClient, http, parseAbiItem, formatUnits } from 'viem';
 import { baseSepolia } from 'viem/chains';
 import { createClient } from '@supabase/supabase-js';
+import { PREDICTION_MARKET_PROXY_ABI } from '../src/contracts/proxyAbi.js';
 import 'dotenv/config';
 
 // === CONFIG ===
@@ -170,34 +171,25 @@ async function handleMarketCreated(log) {
   try {
     const marketId = Number(log.args.marketId);
     
-    // Read full market data
+    // Read full market data using correct ABI
     const raw = await publicClient.readContract({
       address: PROXY_CONTRACT_ADDRESS,
-      abi: [{
-        name: 'markets',
-        type: 'function',
-        stateMutability: 'view',
-        inputs: [{ name: '', type: 'uint256' }],
-        outputs: [
-          { name: 'marketType', type: 'uint8' },
-          { name: 'asset', type: 'string' },
-          { name: 'startTime', type: 'uint256' },
-          { name: 'endTime', type: 'uint256' },
-          { name: 'resolved', type: 'bool' },
-          { name: 'priceWentUp', type: 'bool' },
-          { name: 'totalBets', type: 'uint256' }
-        ]
-      }],
+      abi: PREDICTION_MARKET_PROXY_ABI,
       functionName: 'markets',
       args: [BigInt(marketId)]
     });
 
+    // Extract correct indices based on contract return tuple:
+    // 0: id, 1: marketType, 2: asset, 3: startTime, 4: endTime
+    const startTime = Number(raw[3]);
+    const endTime = Number(raw[4]);
+
     await supabase.from('markets').upsert({
       id: marketId,
-      market_type: Number(raw[0]),
-      asset: raw[1],
-      start_time: new Date(Number(raw[2]) * 1000).toISOString(),
-      end_time: new Date(Number(raw[3]) * 1000).toISOString(),
+      market_type: Number(raw[1]),
+      asset: String(raw[2]),
+      start_time: startTime > 0 ? new Date(startTime * 1000).toISOString() : new Date().toISOString(),
+      end_time: endTime > 0 ? new Date(endTime * 1000).toISOString() : new Date(Date.now() + 86400000).toISOString(),
       resolved: false
     });
     console.log(`✅ Indexed MarketCreated: ${marketId}`);
@@ -211,32 +203,23 @@ async function handleMarketResolved(log) {
   try {
     const marketId = Number(log.args.marketId);
     
-    // Read full market data to get priceWentUp
+    // Read full market data using correct ABI
     const raw = await publicClient.readContract({
       address: PROXY_CONTRACT_ADDRESS,
-      abi: [{
-        name: 'markets',
-        type: 'function',
-        stateMutability: 'view',
-        inputs: [{ name: '', type: 'uint256' }],
-        outputs: [
-          { name: 'marketType', type: 'uint8' },
-          { name: 'asset', type: 'string' },
-          { name: 'startTime', type: 'uint256' },
-          { name: 'endTime', type: 'uint256' },
-          { name: 'resolved', type: 'bool' },
-          { name: 'priceWentUp', type: 'bool' },
-          { name: 'totalBets', type: 'uint256' }
-        ]
-      }],
+      abi: PREDICTION_MARKET_PROXY_ABI,
       functionName: 'markets',
       args: [BigInt(marketId)]
     });
 
+    // Extract correct indices from full tuple:
+    // 9: resolved, 10: priceWentUp
+    const isResolved = Boolean(raw[9]);
+    const priceWentUp = Boolean(raw[10]);
+
     await supabase.from('markets').update({
       resolved: true,
       winning_choice: log.args.winningChoice !== undefined ? Number(log.args.winningChoice) : null,
-      price_went_up: raw[5]
+      price_went_up: priceWentUp
     }).eq('id', marketId);
     console.log(`✅ Indexed MarketResolved: ${marketId}`);
   } catch (err) {
