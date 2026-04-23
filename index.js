@@ -52,10 +52,20 @@ async function ensureUserExists(wallet) {
   console.log(`✅ User ensured: ${address.slice(0, 6)}...${address.slice(-4)}`);
 }
 
+// Mutex for points calculation to prevent race conditions during parallel processing
+const pointLocks = new Map();
+
 // === AWARD POINTS FUNCTION ===
 async function awardPoints(wallet, points, source, metadata = {}) {
+  const address = wallet.toLowerCase();
+
+  // Wait for lock
+  while(pointLocks.get(address)) {
+    await new Promise(r => setTimeout(r, 50));
+  }
+  pointLocks.set(address, true);
+
   try {
-    const address = wallet.toLowerCase();
     await ensureUserExists(address);
 
     const { error: ledgerError } = await supabase
@@ -74,25 +84,30 @@ async function awardPoints(wallet, points, source, metadata = {}) {
       return;
     }
 
-    const { data: user } = await supabase
-      .from('users')
-      .select('total_points')
-      .eq('wallet_address', address)
-      .single();
+    // Instead of just relying on local addition, sum the ledger directly for perfect accuracy
+    const { data: ledger } = await supabase
+      .from('points_ledger')
+      .select('points_earned')
+      .eq('wallet_address', address);
 
-    if (user) {
+    if (ledger) {
+      const trueTotal = ledger.reduce((sum, row) => sum + Number(row.points_earned), 0);
+
       await supabase
         .from('users')
         .update({
-          total_points: user.total_points + points,
+          total_points: trueTotal,
           last_bet_timestamp: new Date().toISOString()
         })
         .eq('wallet_address', address);
+        
+      console.log(`💰 Awarded ${points} points to ${address.slice(0, 6)}...${address.slice(-4)} (${source}) -> Total: ${trueTotal}`);
     }
-
-    console.log(`💰 Awarded ${points} points to ${address.slice(0, 6)}...${address.slice(-4)} (${source})`);
   } catch (error) {
     console.error('❌ Error awarding points:', error.message);
+  } finally {
+    // Release lock
+    pointLocks.set(address, false);
   }
 }
 
