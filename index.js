@@ -201,18 +201,23 @@ async function handleMarketCreated(log) {
     const startTime = Number(raw[3]);
     const endTime = Number(raw[4]);
 
-    await supabase.from('markets').upsert({
+    const { error: upsertErr } = await supabase.from('markets').upsert({
       id: marketId,
       market_type: Number(raw[1]),
-      asset: String(raw[2]),
+      asset: String(raw[2]).replace(/\0/g, ''),
       start_time: startTime > 0 ? new Date(startTime * 1000).toISOString() : new Date().toISOString(),
       end_time: endTime > 0 ? new Date(endTime * 1000).toISOString() : new Date(Date.now() + 86400000).toISOString(),
       resolved: false
     });
+    
+    if (upsertErr) {
+      throw new Error(`Market upsert failed: ${upsertErr.message}`);
+    }
+    
     console.log(`✅ Indexed MarketCreated: ${marketId}`);
   } catch (err) {
     // Only log if not a 'not found' error (it might be a deleted/legacy market)
-    console.error(`❌ Error indexing MarketCreated ${log.args.marketId}:`, err.message);
+    console.error(`❌ Error indexing MarketCreated ${log.args ? log.args.marketId : ''}:`, err.message);
   }
 }
 
@@ -233,11 +238,14 @@ async function handleMarketResolved(log) {
     const isResolved = Boolean(raw[9]);
     const priceWentUp = Boolean(raw[10]);
 
-    await supabase.from('markets').update({
+    const { error: updateErr } = await supabase.from('markets').update({
       resolved: true,
       winning_choice: log.args.winningChoice !== undefined ? Number(log.args.winningChoice) : null,
       price_went_up: priceWentUp
     }).eq('id', marketId);
+    
+    if (updateErr) throw new Error(`Market update failed: ${updateErr.message}`);
+    
     console.log(`✅ Indexed MarketResolved: ${marketId}`);
   } catch (err) {
     console.error(`❌ Error indexing MarketResolved ${log.args.marketId}:`, err.message);
