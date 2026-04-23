@@ -196,15 +196,16 @@ async function handleMarketCreated(log) {
       args: [BigInt(marketId)]
     });
 
-    // Extract correct indices based on contract return tuple:
-    // 0: id, 1: marketType, 2: asset, 3: startTime, 4: endTime
-    const startTime = Number(raw[3]);
-    const endTime = Number(raw[4]);
+    // Extract correct indices or object keys based on contract return tuple
+    const marketType = raw.marketType !== undefined ? Number(raw.marketType) : Number(raw[1]);
+    const asset = raw.asset !== undefined ? String(raw.asset) : String(raw[2]);
+    const startTime = raw.startTime !== undefined ? Number(raw.startTime) : Number(raw[3]);
+    const endTime = raw.endTime !== undefined ? Number(raw.endTime) : Number(raw[4]);
 
     const { error: upsertErr } = await supabase.from('markets').upsert({
       id: marketId,
-      market_type: Number(raw[1]),
-      asset: String(raw[2]).replace(/\0/g, ''),
+      market_type: marketType,
+      asset: asset.replace(/\0/g, ''),
       start_time: startTime > 0 ? new Date(startTime * 1000).toISOString() : new Date().toISOString(),
       end_time: endTime > 0 ? new Date(endTime * 1000).toISOString() : new Date(Date.now() + 86400000).toISOString(),
       resolved: false
@@ -233,10 +234,9 @@ async function handleMarketResolved(log) {
       args: [BigInt(marketId)]
     });
 
-    // Extract correct indices from full tuple:
-    // 9: resolved, 10: priceWentUp
-    const isResolved = Boolean(raw[9]);
-    const priceWentUp = Boolean(raw[10]);
+    // Extract correct indices or object keys from full tuple
+    const isResolved = raw.resolved !== undefined ? Boolean(raw.resolved) : Boolean(raw[9]);
+    const priceWentUp = raw.priceWentUp !== undefined ? Boolean(raw.priceWentUp) : Boolean(raw[10]);
 
     const { error: updateErr } = await supabase.from('markets').update({
       resolved: true,
